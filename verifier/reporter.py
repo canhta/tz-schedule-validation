@@ -1,10 +1,12 @@
 from __future__ import annotations
+import base64
 import html as _html
 import json
+import re
 from collections import Counter
 from dataclasses import asdict
 from .models import OrgReport
-from . import loaders, rrule_expander, edge_applier, reconciler, matcher
+from . import loaders, rrule_expander, edge_applier, reconciler, matcher, defects
 
 def _artifacts(raw_path, tpl_path, schema, raw_sheet=None,
                template_sheet="Schedule Import Template", edge_sheet="Edge-case schedules"):
@@ -109,6 +111,8 @@ h1{font-size:1.3rem;margin:.2rem 0}
 .muted{color:#666;font-size:.85rem}
 .banner{display:inline-block;padding:.5rem 1.1rem;border-radius:8px;font-size:1.1rem;font-weight:700;color:#fff;margin:.5rem 0}
 .PASS{background:#15803d}.FAIL{background:#b91c1c}.NEEDS_REVIEW{background:#b45309}
+.export{margin:.5rem 0 .5rem 1rem;background:#1f2937;color:#fff;border:0;border-radius:8px;padding:.55rem 1rem;font-size:.9rem;cursor:pointer}
+.export:hover{background:#374151}
 .cards{display:flex;flex-wrap:wrap;gap:.6rem;margin:1rem 0}
 .card{background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:.6rem .9rem;min-width:120px}
 .card .n{font-size:1.3rem;font-weight:700}.card .l{font-size:.72rem;color:#666;text-transform:uppercase;letter-spacing:.03em}
@@ -175,6 +179,22 @@ def report_to_html(report, slot_table):
          f"<div class='muted'>{_esc(report.org)}</div>",
          f"<div class='banner {_esc(report.verdict)}'>{_esc(report.verdict)}</div>"]
 
+    # Export button — embed the defect .xlsx as base64 so it downloads with no backend.
+    _slug = re.sub(r"[^A-Za-z0-9]+", "_", report.org).strip("_") or "report"
+    _xlsx_b64 = base64.b64encode(defects.defects_xlsx_bytes(report)).decode("ascii")
+    p.append("<button class='export' onclick='downloadDefects()'>"
+             "&#x2B07; Export defects (.xlsx)</button>")
+    p.append(f"<script type='application/octet-stream' id='defects-data'>{_xlsx_b64}</script>")
+    p.append(f"<script>const DEFECTS_FILENAME={json.dumps(_slug + '_defects.xlsx')};"
+             "function downloadDefects(){"
+             "var b=atob(document.getElementById('defects-data').textContent.trim());"
+             "var a=new Uint8Array(b.length);for(var i=0;i<b.length;i++)a[i]=b.charCodeAt(i);"
+             "var blob=new Blob([a],{type:'application/vnd.openxmlformats-officedocument."
+             "spreadsheetml.sheet'});var u=URL.createObjectURL(blob);"
+             "var el=document.createElement('a');el.href=u;el.download=DEFECTS_FILENAME;"
+             "document.body.appendChild(el);el.click();el.remove();"
+             "setTimeout(function(){URL.revokeObjectURL(u);},1000);}</script>")
+
     # summary cards
     s, c = report.summary, report.coverage
     cards = [("findings", len(report.findings)),
@@ -204,14 +224,23 @@ def report_to_html(report, slot_table):
 
     # findings table
     p.append("<table id='findings'><thead><tr><th>Severity</th><th>Code</th>"
-             "<th>Layer</th><th>Message</th></tr></thead><tbody>")
+             "<th>Teacher</th><th>Participant(s)</th><th>Day</th><th>Time</th>"
+             "<th>Message</th></tr></thead><tbody>")
     for f in findings:
-        text = _esc(f.message).lower()
+        d = f.detail
+        teacher = d.get("teacher", "") or ""
+        member = d.get("member", "") or ""
+        day = d.get("weekday", "") or ""
+        start, end = str(d.get("start", "") or "")[:5], str(d.get("end", "") or "")[:5]
+        tr = f"{start}–{end}" if (start or end) else ""
+        text = f"{f.message} {teacher} {member}".lower()
         p.append(f"<tr data-code='{_esc(f.code)}' data-sev='{_esc(f.severity)}' "
-                 f"data-text='{text}'>"
+                 f"data-text='{_esc(text)}'>"
                  f"<td class='sev-{_esc(f.severity)}'>{_esc(f.severity)}</td>"
                  f"<td><code class='cd'>{_esc(f.code)}</code></td>"
-                 f"<td>{_esc(f.layer)}</td><td>{_esc(f.message)}</td></tr>")
+                 f"<td>{_esc(teacher)}</td><td>{_esc(member)}</td>"
+                 f"<td>{_esc(day)}</td><td>{_esc(tr)}</td>"
+                 f"<td>{_esc(f.message)}</td></tr>")
     p.append("</tbody></table>")
 
     # collapsible slot diff (non-matched only)

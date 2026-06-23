@@ -57,6 +57,29 @@ def test_open_ended_flag_mismatch_flags():
     f = reconciler.reconcile(raw, mig, [], S)
     assert "RULE_FLAG_MISMATCH" in {x.code for x in f}
 
+def test_missing_series_resolves_name_from_edge():
+    # raw enrollment (ids only) with no migration match; edge sheet supplies the names.
+    raw = [_o(dt.date(2026, 6, 18), "raw")]  # teacher_id=10, member_id=99
+    edge = EdgeFact(student_plan_id=1, edge_type="Cancelled", date=dt.date(2026, 6, 18),
+                    start=dt.time(19, 0), end=dt.time(20, 0), teacher_id=10,
+                    teacher_name="Jane Doe", student_id=99, student_name="Kid A",
+                    group_id=None, group_name=None, is_cancelled=False, is_following=False,
+                    is_only_this=False, is_banked=False, is_restored=False)
+    f = reconciler.reconcile(raw, [], [edge], S)
+    ms = [x for x in f if x.code == "MISSING_SERIES"][0]
+    assert ms.detail["teacher"] == "Jane Doe" and ms.detail["member"] == "Kid A"
+
+def test_missing_series_role_tagged_when_unresolved():
+    f = reconciler.reconcile([_o(dt.date(2026, 6, 18), "raw")], [], [], S)
+    ms = [x for x in f if x.code == "MISSING_SERIES"][0]
+    assert ms.detail["teacher"] == "Teacher #10" and ms.detail["member"] == "Student #99"
+
+def test_cancelled_still_live_carries_who():
+    raw = [_o(dt.date(2026, 6, 18), "raw", kind="cancelled")]
+    mig = [_o(dt.date(2026, 6, 18), "template", kind="normal")]
+    c = [x for x in reconciler.reconcile(raw, mig, [], S) if x.code == "CANCELLED_STILL_LIVE"][0]
+    assert c.detail["teacher"] == "Teacher #10" and c.detail["member"] == "Student #99"
+
 def test_edge_orphan_detected():
     raw = [_o(dt.date(2026, 6, 18), "raw", spid=1)]
     mig = [_o(dt.date(2026, 6, 18), "template")]

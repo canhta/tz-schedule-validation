@@ -11,35 +11,93 @@ def _ds(dates):
 def in_scope(o):
     return o.kind not in ("cancelled", "banked")
 
-def _label(r, m):
-    """Readable, filterable label for a (raw, migration) series pair. Prefers the
-    migration side because template rows carry human names; falls back to raw IDs."""
-    s = m if m is not None else r
-    teacher = m.key[0] if m is not None else (f"#{r.teacher_id}" if r.teacher_id else "?")
-    member = m.key[1] if m is not None else (f"#{r.member_id}" if r.member_id else "?")
-    wd = _WD[s.weekday] if 0 <= s.weekday < 7 else "?"
-    text = f"{teacher or '(no instructor)'} / {member or '(no member)'} · {wd} {s.start}-{s.end}"
-    return {"label": text, "teacher": teacher, "member": member,
-            "weekday": wd, "start": str(s.start), "end": str(s.end),
-            "teacher_id": (r.teacher_id if r else None),
-            "member_id": (r.member_id if r else None)}
+def _name_registry(edge_facts, matches):
+    """id -> human name for teachers / students / groups, learned from the edge sheet
+    (which carries names + ids) and from matched raw<->migration pairs (template names
+    aligned to raw ids). Used to resolve raw-only findings to readable names."""
+    teacher, student, group = {}, {}, {}
+    for e in edge_facts:
+        if e.teacher_id and e.teacher_name:
+            teacher.setdefault(e.teacher_id, e.teacher_name)
+        if e.student_id and e.student_name:
+            student.setdefault(e.student_id, e.student_name)
+        if e.group_id and e.group_name:
+            group.setdefault(e.group_id, e.group_name)
+    for r, m, _j in matches:
+        if r is not None and m is not None:
+            if r.teacher_id and m.key[0]:
+                teacher.setdefault(r.teacher_id, m.key[0])
+            if r.member_id and m.key[1]:
+                student.setdefault(r.member_id, m.key[1])
+    return {"teacher": teacher, "student": student, "group": group}
 
-def _compare_pair(r, m, findings):
+def _fid(x):
+    """Render an id cleanly: raw ids arrive as floats (856752.0) — show 856752."""
+    if isinstance(x, float) and x.is_integer():
+        return int(x)
+    return x
+
+def _teacher_disp(reg, teacher_id):
+    if teacher_id and reg["teacher"].get(teacher_id):
+        return reg["teacher"][teacher_id]
+    return f"Teacher #{_fid(teacher_id)}" if teacher_id else "(no instructor)"
+
+def _member_disp(reg, member_id, group_id):
+    """Member is either a student or a group — keep the role explicit either way."""
+    if group_id:
+        return reg["group"].get(group_id) or f"Group #{_fid(group_id)}"
+    if member_id and reg["student"].get(member_id):
+        return reg["student"][member_id]
+    return f"Student #{_fid(member_id)}" if member_id else "(no member)"
+
+def _who(teacher, member, teacher_id, member_id, group_id):
+    return {"teacher": teacher, "member": member,
+            "who": f"Teacher: {teacher} · Student/Group: {member}",
+            "teacher_id": _fid(teacher_id), "member_id": _fid(member_id),
+            "group_id": _fid(group_id)}
+
+def _occ_who(o, reg):
+    """Who/where for a single occurrence-level finding (cancelled / substitute)."""
+    info = _who(_teacher_disp(reg, o.teacher_id), _member_disp(reg, o.member_id, o.group_id),
+                o.teacher_id, o.member_id, o.group_id)
+    info["weekday"] = _WD[o.date.weekday()]
+    return info
+
+def _label(r, m, reg):
+    """Readable, filterable label for a (raw, migration) series pair. Uses template names
+    when matched; otherwise resolves raw ids to names via the registry, falling back to a
+    role-tagged id (e.g. 'Teacher #822622') so the party is never ambiguous."""
+    s = m if m is not None else r
+    if m is not None:
+        teacher = m.key[0] or "(no instructor)"
+        member = m.key[1] or "(no member)"
+    else:
+        teacher = _teacher_disp(reg, r.teacher_id)
+        member = _member_disp(reg, r.member_id, r.group_id)
+    wd = _WD[s.weekday] if 0 <= s.weekday < 7 else "?"
+    text = f"{teacher} / {member} · {wd} {s.start}-{s.end}"
+    info = _who(teacher, member,
+                (r.teacher_id if r else None), (r.member_id if r else None),
+                (r.group_id if r else None))
+    info.update({"label": text, "weekday": wd, "start": str(s.start), "end": str(s.end)})
+    return info
+
+def _compare_pair(r, m, findings, reg):
     """Compare one matched (raw, migration) series pair and append findings."""
     if r is None:
         findings.append(Finding("error", "EXTRA_SERIES",
-                                f"migration series has no raw counterpart ({_label(r, m)['label']})",
+                                f"migration series has no raw counterpart ({_label(r, m, reg)['label']})",
                                 "series", {"count": len(m.dates), "dates": _ds(m.dates),
-                                           **_label(r, m)}))
+                                           **_label(r, m, reg)}))
         return
     if m is None:
         findings.append(Finding("error", "MISSING_SERIES",
-                                f"raw series not represented in migration ({_label(r, m)['label']})",
+                                f"raw series not represented in migration ({_label(r, m, reg)['label']})",
                                 "series", {"count": len(r.dates), "dates": _ds(r.dates),
-                                           **_label(r, m)}))
+                                           **_label(r, m, reg)}))
         return
 
-    lab = _label(r, m)
+    lab = _label(r, m, reg)
     tag = lab["label"]
     if r.open_ended != m.open_ended:
         findings.append(Finding("error", "RULE_FLAG_MISMATCH",
@@ -90,8 +148,10 @@ def reconcile(raw_occ, migrated_occ, edge_facts, schema):
 
     raw_series = matcher.build_series(raw_live, "raw")
     mig_series = matcher.build_series(mig_live, "migration")
-    for r, m, _j in matcher.match_series(raw_series, mig_series):
-        _compare_pair(r, m, findings)
+    matches = matcher.match_series(raw_series, mig_series)
+    reg = _name_registry(edge_facts, matches)
+    for r, m, _j in matches:
+        _compare_pair(r, m, findings, reg)
 
     # Date-specific exception invariants (operate on the full occurrence sets).
     mig_live_slots = Counter(o.slot_key() for o in mig_live)
@@ -100,7 +160,8 @@ def reconcile(raw_occ, migrated_occ, edge_facts, schema):
             findings.append(Finding("error", "CANCELLED_STILL_LIVE",
                                     f"cancelled raw lesson at {o.slot_key()} is live in migration",
                                     "cancellation", {"date": str(o.date), "start": str(o.start),
-                                                     "end": str(o.end), "student_plan_id": o.source_id}))
+                                                     "end": str(o.end), "student_plan_id": o.source_id,
+                                                     **_occ_who(o, reg)}))
 
     # A substituted lesson is only a problem if its slot is missing from the migration
     # entirely. When a permanent substitute is reassigned as the teacher (v2 model), the
@@ -110,14 +171,20 @@ def reconcile(raw_occ, migrated_occ, edge_facts, schema):
             findings.append(Finding("warn", "SUBSTITUTE_DROPPED",
                                     f"substituted lesson at {o.slot_key()} is absent from migration",
                                     "substitute", {"date": str(o.date), "start": str(o.start),
-                                                   "end": str(o.end), "student_plan_id": o.source_id}))
+                                                   "end": str(o.end), "student_plan_id": o.source_id,
+                                                   **_occ_who(o, reg)}))
 
     raw_spids = {o.source_id for o in raw_occ}
     for e in edge_facts:
         if e.student_plan_id not in raw_spids:
+            e_teacher = e.teacher_name or (f"Teacher #{e.teacher_id}" if e.teacher_id else "?")
+            e_member = (e.student_name or e.group_name
+                        or (f"Student #{e.student_id}" if e.student_id else "?"))
             findings.append(Finding("error", "EDGE_ORPHAN",
                                     f"edge StudentPlanID {e.student_plan_id} absent from raw",
-                                    "structural", {"student_plan_id": e.student_plan_id}))
+                                    "structural",
+                                    {"student_plan_id": e.student_plan_id,
+                                     **_who(e_teacher, e_member, e.teacher_id, e.student_id, e.group_id)}))
 
     by_slot = {}
     for o in migrated_occ:

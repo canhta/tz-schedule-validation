@@ -16,7 +16,15 @@ def test_write_defects_xlsx(tmp_path):
     wb = openpyxl.load_workbook(out)
     assert set(wb.sheetnames) == {"Summary", "Defects"}
     d = wb["Defects"]
-    assert d.cell(1, 3).value == "Issue"
+    hdr = [d.cell(1, j).value for j in range(1, 16)]
+    assert hdr == ["#", "Severity", "Issue", "What's wrong", "Teacher", "Student / Group",
+                   "Day", "Time", "Occurrences", "Dates affected", "Teacher ID",
+                   "Student/Group ID", "Plan ID", "Fix hint", "Status"]
+    assert d.cell(2, 2).value == "Error"          # friendly severity
     assert d.cell(2, 3).value == "RULE_FLAG_MISMATCH"
-    assert "Repeat Until" in d.cell(2, 10).value  # the specific value column
-    assert d.cell(2, 12).value  # fix hint present
+    assert d.cell(2, 4).value                      # plain-English "What's wrong"
+    assert d.cell(2, 5).value == "T"               # teacher
+    assert d.cell(2, 8).value == "15:00–15:30"     # time range
+    assert "Repeat Until" in d.cell(2, 10).value   # dates affected / value
+    assert d.cell(2, 14).value                     # fix hint present
+    assert d.cell(2, 15).value == "Open"           # status

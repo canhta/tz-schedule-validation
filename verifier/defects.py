@@ -29,22 +29,55 @@ FIX_HINTS = {
     "EDGE_ORPHAN": "An edge row references a StudentPlanID that does not exist in raw.",
 }
 
-_COLUMNS = ["#", "Severity", "Issue", "Instructor", "Member", "Day", "Start", "End",
-            "Count", "Dates / value", "StudentPlanID", "Fix hint"]
+# Plain-English description of the problem (for the person doing validation, not the dev).
+WHAT = {
+    "MISSING_SERIES": "A recurring lesson series from the live system has no match in the "
+                      "converted template — it looks dropped.",
+    "EXTRA_SERIES": "The converted template has a recurring series that does not exist in the "
+                    "live system.",
+    "RULE_FLAG_MISMATCH": "The live series is open-ended but the template gave it an end date "
+                          "(or vice versa).",
+    "RULE_MISSING_DATE": "The template's recurrence skips a lesson that exists in the live system.",
+    "RULE_EXTRA_IN_WINDOW": "The template's recurrence creates a lesson the live system never had.",
+    "MISSING": "A one-off lesson in the live system is missing from the template.",
+    "EXTRA": "A one-off lesson in the template is not in the live system.",
+    "CANCELLED_STILL_LIVE": "A lesson cancelled in the live system is still scheduled (live) in "
+                            "the template.",
+    "SUBSTITUTE_DROPPED": "A substitute lesson from the live system is missing from the template.",
+    "CADENCE_MISMATCH": "Weekly vs bi-weekly cadence differs between the live system and template.",
+    "DOUBLE_COUNT": "A time slot has both a normal and an exception lesson in the template "
+                    "(double-booked).",
+    "EDGE_ORPHAN": "An edge-case row points to a plan ID that does not exist in the live data.",
+}
+_SEVERITY = {"error": "Error", "warn": "Warning"}
+
+_COLUMNS = ["#", "Severity", "Issue", "What's wrong", "Teacher", "Student / Group", "Day",
+            "Time", "Occurrences", "Dates affected", "Teacher ID", "Student/Group ID",
+            "Plan ID", "Fix hint", "Status"]
+
+def _clock(v):
+    """'16:00:00' -> '16:00'."""
+    s = str(v or "")
+    return s[:5] if len(s) >= 5 and s[2] == ":" else s
+
+def _time_range(d):
+    start, end = _clock(d.get("start")), _clock(d.get("end"))
+    return f"{start}–{end}" if (start or end) else ""
 
 def _row(i, f):
     d = f.detail
-    value = d.get("dates") or d.get("date") or ""
+    affected = d.get("dates") or d.get("date") or ""
     if f.code == "RULE_FLAG_MISMATCH":
-        value = f"template Repeat Until = {d.get('template_repeat_until')}"
+        affected = f"template Repeat Until = {d.get('template_repeat_until')}"
+    member_id = d.get("group_id") or d.get("member_id") or ""
     return [
-        i, f.severity, f.code, d.get("teacher", ""), d.get("member", ""),
-        d.get("weekday", ""), d.get("start", ""), d.get("end", ""),
-        d.get("count", ""), value, d.get("student_plan_id", ""),
-        FIX_HINTS.get(f.code, ""),
+        i, _SEVERITY.get(f.severity, f.severity), f.code, WHAT.get(f.code, ""),
+        d.get("teacher", ""), d.get("member", ""), d.get("weekday", ""), _time_range(d),
+        d.get("count", ""), affected, d.get("teacher_id", ""), member_id,
+        d.get("student_plan_id", ""), FIX_HINTS.get(f.code, ""), "Open",
     ]
 
-def write_defects_xlsx(report, out_path):
+def build_workbook(report):
     wb = openpyxl.Workbook()
 
     # Summary sheet
@@ -80,10 +113,20 @@ def write_defects_xlsx(report, out_path):
                 cell.fill = red
             elif f.severity == "warn":
                 cell.fill = amber
-            cell.alignment = Alignment(vertical="top", wrap_text=(j in (10, 12)))
-    widths = [4, 9, 22, 18, 22, 5, 9, 9, 7, 40, 12, 50]
+            cell.alignment = Alignment(vertical="top", wrap_text=(j in (4, 10, 14)))
+    widths = [4, 9, 22, 46, 20, 22, 5, 12, 11, 34, 11, 14, 10, 50, 10]
     for j, w in enumerate(widths, 1):
         d.column_dimensions[openpyxl.utils.get_column_letter(j)].width = w
     d.freeze_panes = "A2"
-    wb.save(out_path)
+    return wb
+
+def write_defects_xlsx(report, out_path):
+    build_workbook(report).save(out_path)
     return out_path
+
+def defects_xlsx_bytes(report):
+    """The same defect report as raw .xlsx bytes (for embedding/download)."""
+    import io
+    buf = io.BytesIO()
+    build_workbook(report).save(buf)
+    return buf.getvalue()

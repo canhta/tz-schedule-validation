@@ -26,3 +26,15 @@ def test_report_to_html_is_standalone_and_escaped():
     assert "Paper &lt;Moon&gt;" in html          # escaped
     assert "FAIL" in html and "missing" in html
     assert "<style>" in html                       # inline CSS, no external file
+
+def test_report_to_html_has_embedded_xlsx_export():
+    import base64
+    rep = OrgReport(org="Paper Moon", verdict="FAIL", summary={"findings_by_code": {"MISSING": 1}},
+                    findings=(Finding("error", "MISSING", "1 missing", "conservation", {}),),
+                    coverage={})
+    html = reporter.report_to_html(rep, [])
+    assert "downloadDefects()" in html                       # the button + handler
+    assert "Paper_Moon_defects.xlsx" in html                 # slugged filename
+    # the embedded payload is a real xlsx (zip magic 'PK')
+    b64 = html.split("id='defects-data'>")[1].split("</script>")[0].strip()
+    assert base64.b64decode(b64)[:2] == b"PK"
