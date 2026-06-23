@@ -1,0 +1,9 @@
+services:
+  app:
+    build: .
+    image: tz-schedule-validation
+    container_name: tz-schedule-validation
+    restart: unless-stopped
+    # Publish only to localhost; nginx (host) reverse-proxies + terminates TLS.
+    ports:
+      - "127.0.0.1:8090:8000"

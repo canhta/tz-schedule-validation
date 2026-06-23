@@ -1,0 +1,7 @@
+*.xlsx
+__pycache__/
+*.pyc
+.venv/
+tests/fixtures/
+paper_moon_report.html
+*.html
