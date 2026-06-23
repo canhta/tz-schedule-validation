@@ -22,14 +22,14 @@ sudo cp deploy/nginx/tz-schedule-validation.conf \
 sudo ln -s /etc/nginx/sites-available/tz-schedule-validation.quickdemo.site \
            /etc/nginx/sites-enabled/
 
-# 3. Basic auth user
-sudo apt-get install -y apache2-utils   # provides htpasswd
-sudo htpasswd -c /etc/nginx/.htpasswd-tzsv admin
-
-# 4. TLS (Certbot edits the vhost to add 443 + redirect)
+# 3. TLS (Certbot edits the vhost to add 443 + redirect)
 sudo nginx -t && sudo systemctl reload nginx
 sudo certbot --nginx -d tz-schedule-validation.quickdemo.site
 ```
+
+The site is **public** (no auth). To gate it, add inside `location /`:
+`auth_basic "TZ Schedule Validation"; auth_basic_user_file /etc/nginx/.htpasswd-tzsv;`
+then `sudo htpasswd -c /etc/nginx/.htpasswd-tzsv admin` and reload nginx.
 
 ## CI/CD
 
