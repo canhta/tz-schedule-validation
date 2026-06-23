@@ -36,8 +36,8 @@ def _load_sheet(path, sheet):
     wb.close()
     return rows
 
-def load_raw(path, schema):
-    return _load_sheet(path, None)
+def load_raw(path, schema, sheet=None):
+    return _load_sheet(path, sheet)
 
 def load_template(path, schema, sheet="Schedule Import Template"):
     return _load_sheet(path, sheet)

@@ -53,9 +53,14 @@ python -m verifier.server            # http://localhost:8000
 python -m verifier.server --port 9000
 ```
 
-Pure Python stdlib (no extra dependencies). The interactive report opens in the same tab:
-verdict banner, summary cards, filter chips per finding type, severity toggles, a search box,
-and a collapsible slot diff.
+After uploading, you **map the sheets** — pick which sheet is the raw data, the import
+template, and the edge-case sheet (defaults are guessed from the sheet names; edge can be set
+to `(none)`). Nothing is hardcoded, so it works across orgs whose exports name sheets
+differently. Then the interactive report opens in the same tab: verdict banner, summary cards,
+filter chips per finding type, severity toggles, a search box, and a collapsible slot diff.
+
+Pure Python stdlib (no extra dependencies). The CLI mirrors this with
+`--raw-sheet/--template-sheet/--edge-sheet` (use `--edge-sheet none` to skip the edge sheet).
 
 ## How it works
 

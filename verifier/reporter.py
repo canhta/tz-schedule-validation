@@ -6,13 +6,17 @@ from dataclasses import asdict
 from .models import OrgReport
 from . import loaders, rrule_expander, edge_applier, reconciler, matcher
 
-def _artifacts(raw_path, tpl_path, schema):
-    raw_rows = loaders.load_raw(raw_path, schema)
-    tpl_rows = loaders.load_template(tpl_path, schema)
-    try:
-        edge_rows = loaders.load_edge(tpl_path, schema)
-    except KeyError:
+def _artifacts(raw_path, tpl_path, schema, raw_sheet=None,
+               template_sheet="Schedule Import Template", edge_sheet="Edge-case schedules"):
+    raw_rows = loaders.load_raw(raw_path, schema, raw_sheet)
+    tpl_rows = loaders.load_template(tpl_path, schema, template_sheet)
+    if edge_sheet is None:  # user mapped edge to "(none)"
         edge_rows = []
+    else:
+        try:
+            edge_rows = loaders.load_edge(tpl_path, schema, edge_sheet)
+        except KeyError:
+            edge_rows = []
 
     offset = loaders.detect_tz_offset_minutes(raw_rows, tpl_rows, schema)
     raw_occ = [loaders.raw_to_occurrence(r, schema, offset) for r in raw_rows]
@@ -48,11 +52,11 @@ def _build_report(a, org_name):
     return OrgReport(org=org_name, verdict=reconciler.verdict(findings),
                      summary=summary, findings=tuple(findings), coverage=coverage)
 
-def verify_org(raw_path, tpl_path, schema, org_name):
-    return _build_report(_artifacts(raw_path, tpl_path, schema), org_name)
+def verify_org(raw_path, tpl_path, schema, org_name, **sheets):
+    return _build_report(_artifacts(raw_path, tpl_path, schema, **sheets), org_name)
 
-def verify_org_view(raw_path, tpl_path, schema, org_name):
-    a = _artifacts(raw_path, tpl_path, schema)
+def verify_org_view(raw_path, tpl_path, schema, org_name, **sheets):
+    a = _artifacts(raw_path, tpl_path, schema, **sheets)
     return _build_report(a, org_name), build_slot_table(a["raw_occ"], a["migrated"])
 
 def build_slot_table(raw_occ, migrated):
